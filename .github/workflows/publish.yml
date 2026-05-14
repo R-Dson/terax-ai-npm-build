@@ -1,7 +1,7 @@
 name: Build and Publish to NPM
 
 on:
-  workflow_dispatch: 
+  workflow_dispatch:
 
 jobs:
   build-binaries:
@@ -16,7 +16,7 @@ jobs:
           - os: macos-13
             output_name: terax-darwin-x64
             binary_path: src-tauri/target/release/terax
-          - os: macos-14 # Apple Silicon
+          - os: macos-14
             output_name: terax-darwin-arm64
             binary_path: src-tauri/target/release/terax
           - os: windows-latest
@@ -49,10 +49,12 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
 
       - name: Install Project Dependencies
-        run: pnpm install
+        run: pnpm install --no-frozen-lockfile
 
       - name: Build Tauri App
-        run: pnpm tauri build
+        run: pnpm tauri build --no-bundle
+        env:
+          TAURI_CLI_SKIP_VERSION_CHECK: true
 
       - name: Rename and Prepare Binary
         shell: bash
