@@ -3,6 +3,9 @@ name: Build and Publish to NPM
 on:
   workflow_dispatch:
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   build-binaries:
     name: Build on ${{ matrix.os }}
@@ -13,10 +16,7 @@ jobs:
           - os: ubuntu-22.04
             output_name: terax-linux-x64
             binary_path: src-tauri/target/release/terax
-          - os: macos-13
-            output_name: terax-darwin-x64
-            binary_path: src-tauri/target/release/terax
-          - os: macos-14
+          - os: macos-14 # Apple Silicon (Fast)
             output_name: terax-darwin-arm64
             binary_path: src-tauri/target/release/terax
           - os: windows-latest
@@ -32,12 +32,12 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Install pnpm
         uses: pnpm/action-setup@v3
         with:
-          version: 8
+          version: 9
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -51,7 +51,6 @@ jobs:
       - name: Install Project Dependencies
         run: pnpm install --no-frozen-lockfile
 
-      # This step worked! It prevents the CLI from stopping the build.
       - name: Force Version Sync
         run: |
           node -e "
@@ -63,7 +62,6 @@ jobs:
           "
           pnpm install --no-frozen-lockfile
 
-      # Clean build command without invalid flags
       - name: Build Tauri App
         run: pnpm tauri build --no-bundle
         env:
@@ -92,8 +90,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
-          registry-url: 'https://registry.npmjs.org'
+          node-version: 22
 
       - name: Create Bin Directory
         run: mkdir -p bin/
