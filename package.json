@@ -1,6 +1,6 @@
 {
   "name": "terax-ai",
-  "version": "0.6.4",
+  "version": "0.6.4-patch",
   "description": "AI-native terminal emulator",
   "bin": {
     "terax": "bin/terax.js"
