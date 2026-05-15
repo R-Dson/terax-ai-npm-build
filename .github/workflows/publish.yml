@@ -152,3 +152,34 @@ jobs:
           git add package.json
           git commit -m "chore: sync with upstream version ${{ needs.check-version.outputs.version }}"
           git push
+
+  cleanup-runs:
+    name: Clean Up Skipped Runs
+    runs-on: ubuntu-latest
+    # Needs check-version just so it runs alongside or after it
+    needs: check-version
+    # Requires permission to delete workflow runs
+    permissions:
+      actions: write
+    steps:
+      - name: Delete past skipped runs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # 1. Get the current workflow's internal ID
+          WORKFLOW_ID=$(gh api repos/${{ github.repository }}/actions/runs/${{ github.run_id }} --jq '.workflow_id')
+          
+          # 2. Fetch the last 50 completed, successful runs of THIS workflow
+          # (Excludes the current in-progress run automatically)
+          RUNS=$(gh api repos/${{ github.repository }}/actions/workflows/$WORKFLOW_ID/runs?per_page=50 --jq '.workflow_runs[] | select(.status=="completed" and .conclusion=="success") | .id')
+          
+          for RUN_ID in $RUNS; do
+            # 3. Check the conclusion of the 'publish-and-update-repo' job for this specific run
+            CONCLUSION=$(gh api repos/${{ github.repository }}/actions/runs/$RUN_ID/jobs --jq '.jobs[] | select(.name=="publish-and-update-repo") | .conclusion' || echo "")
+            
+            # 4. If the publish step was skipped, it means no update was found. Delete it!
+            if [ "$CONCLUSION" == "skipped" ]; then
+              echo "Run $RUN_ID found no updates and skipped publishing. Deleting..."
+              gh api -X DELETE repos/${{ github.repository }}/actions/runs/$RUN_ID --silent || echo "Failed to delete $RUN_ID"
+            fi
+          done
