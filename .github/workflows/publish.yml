@@ -4,6 +4,17 @@ on:
   schedule:
     - cron: '*/15 * * * *'
   workflow_dispatch:
+    inputs:
+      force_publish:
+        description: 'Force build and publish even if version is unchanged'
+        required: false
+        type: boolean
+        default: false
+
+# Prevent parallel runs from clashing on git commits or npm publishes
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -23,7 +34,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Fetch the latest release tag from the original creator
+          # Use gh api to avoid 60-req/hour rate limits
           TAG=$(gh api repos/crynta/terax-ai/releases/latest --jq '.tag_name' | sed 's/v//')
           echo "tag=$TAG" >> $GITHUB_OUTPUT
 
@@ -40,7 +51,8 @@ jobs:
 
   build-binaries:
     needs: check-version
-    if: needs.check-version.outputs.new_version_found == 'true' || github.event_name == 'workflow_dispatch'
+    # Only run if a new version is found OR if the user manually checked "force_publish"
+    if: needs.check-version.outputs.new_version_found == 'true' || github.event.inputs.force_publish == 'true'
     name: Build on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
@@ -115,11 +127,13 @@ jobs:
   publish-and-update-repo:
     needs: [check-version, build-binaries]
     runs-on: ubuntu-latest
+    # Only run if binaries were successfully built
+    if: needs.build-binaries.result == 'success'
     steps:
       - name: Checkout Your Repo
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.MY_GITHUB_TOKEN }} # Use PAT to allow triggers
+          token: ${{ secrets.MY_GITHUB_TOKEN }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -143,7 +157,7 @@ jobs:
       - name: Authenticate and Publish to NPM
         run: |
           echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
-          npm publish --access public
+          npm publish --access public || echo "Version exists."
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -152,15 +166,20 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add package.json
-          git commit -m "chore: sync with upstream version ${{ needs.check-version.outputs.version }}"
-          git push
+          # Check if there are actually changes to commit to avoid "nothing to commit" errors
+          if ! git diff --cached --exit-code; then
+            git commit -m "chore: sync with upstream version ${{ needs.check-version.outputs.version }}"
+            git push
+          else
+            echo "No changes to commit."
+          fi
 
   cleanup-runs:
     name: Clean Up Skipped Runs
     runs-on: ubuntu-latest
-    # Needs check-version just so it runs alongside or after it
-    needs: check-version
-    # Requires permission to delete workflow runs
+    needs: [check-version, build-binaries]
+    # Run this regardless of whether the build was skipped or successful
+    if: always()
     permissions:
       actions: write
     steps:
@@ -168,20 +187,17 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # 1. Get the current workflow's internal ID
           WORKFLOW_ID=$(gh api repos/${{ github.repository }}/actions/runs/${{ github.run_id }} --jq '.workflow_id')
           
-          # 2. Fetch the last 50 completed, successful runs of THIS workflow
-          # (Excludes the current in-progress run automatically)
+          # Fetch the last 50 completed, successful runs
           RUNS=$(gh api repos/${{ github.repository }}/actions/workflows/$WORKFLOW_ID/runs?per_page=50 --jq '.workflow_runs[] | select(.status=="completed" and .conclusion=="success") | .id')
           
           for RUN_ID in $RUNS; do
-            # 3. Check the conclusion of the 'publish-and-update-repo' job for this specific run
-            CONCLUSION=$(gh api repos/${{ github.repository }}/actions/runs/$RUN_ID/jobs --jq '.jobs[] | select(.name=="publish-and-update-repo") | .conclusion' || echo "")
+            # Check if the build job was skipped in that specific run
+            CONCLUSION=$(gh api repos/${{ github.repository }}/actions/runs/$RUN_ID/jobs --jq '.jobs[] | select(.name=="Build on ubuntu-22.04") | .conclusion' || echo "")
             
-            # 4. If the publish step was skipped, it means no update was found. Delete it!
             if [ "$CONCLUSION" == "skipped" ]; then
-              echo "Run $RUN_ID found no updates and skipped publishing. Deleting..."
-              gh api -X DELETE repos/${{ github.repository }}/actions/runs/$RUN_ID --silent || echo "Failed to delete $RUN_ID"
+              echo "Run $RUN_ID was just a version check (skipped build). Deleting..."
+              gh api -X DELETE repos/${{ github.repository }}/actions/runs/$RUN_ID --silent || true
             fi
           done
