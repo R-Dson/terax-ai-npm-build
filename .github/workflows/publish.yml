@@ -83,6 +83,10 @@ jobs:
     name: Publish to NPM
     needs: build-binaries
     runs-on: ubuntu-latest
+    # THESE PERMISSIONS ARE REQUIRED FOR TRUSTED PUBLISHING
+    permissions:
+      contents: read
+      id-token: write 
     steps:
       - name: Checkout Your Wrapper Repository
         uses: actions/checkout@v4
@@ -91,7 +95,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          # We'll handle the registry config manually to ensure it works
+          registry-url: 'https://registry.npmjs.org'
 
       - name: Create Bin Directory
         run: mkdir -p bin/
@@ -105,10 +109,7 @@ jobs:
       - name: Fix Executable Permissions
         run: chmod +x bin/terax-* bin/terax.js
 
-      - name: Authenticate and Publish
-        run: |
-          # Create .npmrc file to link the token to the registry
-          echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
-          npm publish --access public
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Publish to NPM
+        # No more manual .npmrc or secrets! 
+        # --provenance proves it was built on GitHub
+        run: npm publish --access public --provenance
