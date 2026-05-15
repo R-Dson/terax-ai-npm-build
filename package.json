@@ -1,5 +1,5 @@
 {
-  "name": "terax",
+  "name": "terax-ai",
   "version": "0.6.4",
   "description": "AI-native terminal emulator",
   "bin": {
@@ -7,7 +7,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/R-Dson/terax-ai-npm-build"
+    "url": "https://github.com/R-Dson/terax-ai-npm-build.git"
   },
   "license": "Apache-2.0"
 }
