@@ -2,8 +2,8 @@ name: Auto-Sync Build and Publish
 
 on:
   schedule:
-    - cron: '0 */6 * * *' # Check every 6 hours
-  workflow_dispatch:      # Keep the manual button
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -20,9 +20,11 @@ jobs:
 
       - name: Get Upstream Version
         id: upstream
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # Fetch the latest release tag from the original creator
-          TAG=$(curl -s https://api.github.com/repos/crynta/terax-ai/releases/latest | jq -r .tag_name | sed 's/v//')
+          TAG=$(gh api repos/crynta/terax-ai/releases/latest --jq '.tag_name' | sed 's/v//')
           echo "tag=$TAG" >> $GITHUB_OUTPUT
 
       - name: Compare Versions
