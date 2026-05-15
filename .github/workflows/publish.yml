@@ -1,85 +1,4 @@
-name: Build and Publish to NPM
-
-on:
-  workflow_dispatch:
-
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
-jobs:
-  build-binaries:
-    name: Build on ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        include:
-          - os: ubuntu-22.04
-            output_name: terax-linux-x64
-            binary_path: src-tauri/target/release/terax
-          - os: macos-14 # Apple Silicon (Fast)
-            output_name: terax-darwin-arm64
-            binary_path: src-tauri/target/release/terax
-          - os: windows-latest
-            output_name: terax-win32-x64.exe
-            binary_path: src-tauri/target/release/terax.exe
-
-    steps:
-      - name: Checkout Original Repository
-        uses: actions/checkout@v4
-        with:
-          repository: crynta/terax-ai
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: Install pnpm
-        uses: pnpm/action-setup@v3
-        with:
-          version: 9
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install Linux Dependencies
-        if: matrix.os == 'ubuntu-22.04'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
-
-      - name: Install Project Dependencies
-        run: pnpm install --no-frozen-lockfile
-
-      - name: Force Version Sync
-        run: |
-          node -e "
-            const fs = require('fs');
-            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-            pkg.dependencies['@tauri-apps/api'] = '~2.10.0';
-            pkg.devDependencies['@tauri-apps/cli'] = '~2.10.0';
-            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));
-          "
-          pnpm install --no-frozen-lockfile
-
-      - name: Build Tauri App
-        run: pnpm tauri build --no-bundle
-        env:
-          TAURI_CLI_SKIP_VERSION_CHECK: true
-
-      - name: Rename and Prepare Binary
-        shell: bash
-        run: |
-          mkdir -p final-bin/
-          mv ${{ matrix.binary_path }} final-bin/${{ matrix.output_name }}
-
-      - name: Upload Binary Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.output_name }}
-          path: final-bin/
-
-  publish-npm:
+publish-npm:
     name: Publish to NPM
     needs: build-binaries
     runs-on: ubuntu-latest
@@ -91,6 +10,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
+          # We'll handle the registry config manually to ensure it works
 
       - name: Create Bin Directory
         run: mkdir -p bin/
@@ -104,7 +24,10 @@ jobs:
       - name: Fix Executable Permissions
         run: chmod +x bin/terax-* bin/terax.js
 
-      - name: Publish to NPM
-        run: npm publish --access public
+      - name: Authenticate and Publish
+        run: |
+          # Create .npmrc file to link the token to the registry
+          echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
+          npm publish --access public
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
