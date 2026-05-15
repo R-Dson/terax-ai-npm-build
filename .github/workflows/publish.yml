@@ -84,7 +84,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write
+      id-token: write # This is the "key" for Trusted Publishing
     steps:
       - name: Checkout Your Wrapper Repository
         uses: actions/checkout@v4
@@ -93,7 +93,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          # NO registry-url here. This keeps the environment clean for OIDC.
+          # No registry-url here. We want npm to use the OIDC handshake.
 
       - name: Create Bin Directory
         run: mkdir -p bin/
@@ -108,5 +108,5 @@ jobs:
         run: chmod +x bin/terax-* bin/terax.js
 
       - name: Publish to NPM
-        # Pure OIDC publish
+        # --provenance creates the secure link back to this GitHub run
         run: npm publish --access public --provenance
