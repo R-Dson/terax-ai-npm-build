@@ -78,15 +78,13 @@ jobs:
         with:
           name: ${{ matrix.output_name }}
           path: final-bin/
-
   publish-npm:
     name: Publish to NPM
     needs: build-binaries
     runs-on: ubuntu-latest
-    # THESE PERMISSIONS ARE REQUIRED FOR TRUSTED PUBLISHING
     permissions:
       contents: read
-      id-token: write 
+      id-token: write
     steps:
       - name: Checkout Your Wrapper Repository
         uses: actions/checkout@v4
@@ -95,7 +93,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          registry-url: 'https://registry.npmjs.org'
+          # NO registry-url here. This keeps the environment clean for OIDC.
 
       - name: Create Bin Directory
         run: mkdir -p bin/
@@ -110,6 +108,5 @@ jobs:
         run: chmod +x bin/terax-* bin/terax.js
 
       - name: Publish to NPM
-        # No more manual .npmrc or secrets! 
-        # --provenance proves it was built on GitHub
+        # Pure OIDC publish
         run: npm publish --access public --provenance
