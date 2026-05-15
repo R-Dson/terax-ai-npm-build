@@ -1,13 +1,44 @@
-name: Build and Publish to NPM
+name: Auto-Sync Build and Publish
 
 on:
-  workflow_dispatch:
+  schedule:
+    - cron: '0 */6 * * *' # Check every 6 hours
+  workflow_dispatch:      # Keep the manual button
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    outputs:
+      new_version_found: ${{ steps.compare.outputs.new_version_found }}
+      version: ${{ steps.upstream.outputs.tag }}
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v4
+
+      - name: Get Upstream Version
+        id: upstream
+        run: |
+          # Fetch the latest release tag from the original creator
+          TAG=$(curl -s https://api.github.com/repos/crynta/terax-ai/releases/latest | jq -r .tag_name | sed 's/v//')
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+      - name: Compare Versions
+        id: compare
+        run: |
+          LOCAL_VER=$(jq -r .version package.json)
+          UPSTREAM_VER=${{ steps.upstream.outputs.tag }}
+          if [ "$LOCAL_VER" != "$UPSTREAM_VER" ]; then
+            echo "new_version_found=true" >> $GITHUB_OUTPUT
+          else
+            echo "new_version_found=false" >> $GITHUB_OUTPUT
+          fi
+
   build-binaries:
+    needs: check-version
+    if: needs.check-version.outputs.new_version_found == 'true' || github.event_name == 'workflow_dispatch'
     name: Build on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
@@ -16,7 +47,7 @@ jobs:
           - os: ubuntu-22.04
             output_name: terax-linux-x64
             binary_path: src-tauri/target/release/terax
-          - os: macos-14 # Apple Silicon (Fast)
+          - os: macos-14
             output_name: terax-darwin-arm64
             binary_path: src-tauri/target/release/terax
           - os: windows-latest
@@ -78,21 +109,20 @@ jobs:
         with:
           name: ${{ matrix.output_name }}
           path: final-bin/
-  publish-npm:
-    name: Publish to NPM
-    needs: build-binaries
+
+  publish-and-update-repo:
+    needs: [check-version, build-binaries]
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Your Wrapper Repository
+      - name: Checkout Your Repo
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.MY_GITHUB_TOKEN }} # Use PAT to allow triggers
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
-
-      - name: Create Bin Directory
-        run: mkdir -p bin/
 
       - name: Download All Artifacts
         uses: actions/download-artifact@v4
@@ -103,9 +133,22 @@ jobs:
       - name: Fix Executable Permissions
         run: chmod +x bin/terax-* bin/terax.js
 
-      - name: Authenticate and Publish
+      - name: Update package.json version
+        run: |
+          NEW_VER=${{ needs.check-version.outputs.version }}
+          jq ".version = \"$NEW_VER\"" package.json > package.json.tmp && mv package.json.tmp package.json
+
+      - name: Authenticate and Publish to NPM
         run: |
           echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
           npm publish --access public
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Commit version bump back to repo
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add package.json
+          git commit -m "chore: sync with upstream version ${{ needs.check-version.outputs.version }}"
+          git push
