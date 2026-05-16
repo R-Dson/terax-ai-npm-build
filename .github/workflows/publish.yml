@@ -60,8 +60,14 @@ jobs:
           - os: ubuntu-22.04
             output_name: terax-linux-x64
             binary_path: src-tauri/target/release/terax
+          - os: ubuntu-22.04-arm
+            output_name: terax-linux-arm64
+            binary_path: src-tauri/target/release/terax
           - os: macos-14
             output_name: terax-darwin-arm64
+            binary_path: src-tauri/target/release/terax
+          - os: macos-13
+            output_name: terax-darwin-x64
             binary_path: src-tauri/target/release/terax
           - os: windows-latest
             output_name: terax-win32-x64.exe
