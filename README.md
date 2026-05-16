@@ -1,6 +1,6 @@
 # Terax ai npm
 
-This package provides a cross-platform Node.js wrapper for the `terax` binary.
+This package provides a cross-platform Node.js minimal wrapper for the `terax` binary. The published package can be found on [npmjs](https://www.npmjs.com/package/terax-ai). 
 
 ## Installation
 
