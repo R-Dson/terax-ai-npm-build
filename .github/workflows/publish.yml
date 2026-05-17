@@ -192,19 +192,18 @@ jobs:
           # 1. Get the current workflow ID
           WORKFLOW_ID=$(gh api repos/${{ github.repository }}/actions/runs/${{ github.run_id }} --jq '.workflow_id')
           
-          # 2. Fetch the last 100 runs that are completed and successful
-          # (Successful runs include those where the build was skipped)
-          RUNS=$(gh api "repos/${{ github.repository }}/actions/workflows/$WORKFLOW_ID/runs?per_page=100" \
+          # 2. Fetch the last 50 runs that are completed and successful
+          RUNS=$(gh api "repos/${{ github.repository }}/actions/workflows/$WORKFLOW_ID/runs?per_page=50" \
             --jq ".workflow_runs[] | select(.id != ${{ github.run_id }} and .status==\"completed\" and .conclusion==\"success\") | .id")
           
           for RUN_ID in $RUNS; do
-            # 3. Check if the "Build on ubuntu-22.04" job was skipped in that run.
-            # Using 'test' handles names like "Build on ubuntu-22.04 (linux, ...)"
+            # 3. Check if the non-matrix job "publish-and-update-repo" was skipped
             CONCLUSION=$(gh api repos/${{ github.repository }}/actions/runs/$RUN_ID/jobs \
-              --jq '.jobs[] | select(.name | test("Build on ubuntu-22.04")) | .conclusion' || echo "notfound")
+              --jq '.jobs[] | select(.name == "publish-and-update-repo") | .conclusion' || echo "notfound")
             
-            if [ "$CONCLUSION" == "skipped" ]; then
+            # 4. Use grep to safely check the conclusion
+            if echo "$CONCLUSION" | grep -q "skipped"; then
               echo "Run $RUN_ID was a version check only (build skipped). Deleting..."
-              gh api -X DELETE repos/${{ github.repository }}/actions/runs/$RUN_ID --silent || true
+              gh run delete $RUN_ID
             fi
           done
