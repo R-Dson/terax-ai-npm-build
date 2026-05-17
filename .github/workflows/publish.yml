@@ -204,6 +204,6 @@ jobs:
             # 4. Use grep to safely check the conclusion
             if echo "$CONCLUSION" | grep -q "skipped"; then
               echo "Run $RUN_ID was a version check only (build skipped). Deleting..."
-              gh run delete $RUN_ID
+              gh run delete $RUN_ID --repo ${{ github.repository }}
             fi
           done
