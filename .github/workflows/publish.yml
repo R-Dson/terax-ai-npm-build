@@ -27,7 +27,7 @@ jobs:
       version: ${{ steps.upstream.outputs.tag }}
     steps:
       - name: Checkout Repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Get Upstream Version
         id: upstream
@@ -75,7 +75,7 @@ jobs:
 
     steps:
       - name: Checkout Original Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: crynta/terax-ai
 
@@ -85,9 +85,9 @@ jobs:
           node-version: 22
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v3
+        uses: pnpm/action-setup@v6
         with:
-          version: 9
+          version: 10
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -135,7 +135,7 @@ jobs:
     if: needs.build-binaries.result == 'success'
     steps:
       - name: Checkout Your Repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           token: ${{ secrets.MY_GITHUB_TOKEN }}
 
