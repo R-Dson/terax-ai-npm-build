@@ -32,23 +32,29 @@ jobs:
         with:
           node-version: 22
 
+      - name: Enable pnpm
+        shell: bash
+        run: |
+          corepack enable
+          corepack prepare pnpm@10 --activate
+          pnpm --version
+
       - name: Get Upstream Version
         id: upstream
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Use gh api to avoid rate limits
           TAG=$(gh api repos/crynta/terax-ai/releases/latest --jq '.tag_name' | sed 's/^v//')
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "Upstream latest release version: $TAG"
 
       - name: Compare Versions
         id: compare
+        shell: bash
         run: |
           PACKAGE_NAME=$(jq -r .name package.json)
           LOCAL_VER=$(jq -r .version package.json)
 
-          # npm view exits non-zero if the package does not exist yet
           NPM_VER=$(npm view "$PACKAGE_NAME" version 2>/dev/null || echo "0.0.0")
           UPSTREAM_VER="${{ steps.upstream.outputs.tag }}"
 
@@ -92,7 +98,7 @@ jobs:
           #   output_name: terax-darwin-x64
           #   binary_path: src-tauri/target/release/terax
 
-          - os: windows-latest
+          - os: windows-2025
             output_name: terax-win32-x64.exe
             binary_path: src-tauri/target/release/terax.exe
 
@@ -107,16 +113,19 @@ jobs:
         with:
           node-version: 22
 
-      - name: Install pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10
+      - name: Enable pnpm
+        shell: bash
+        run: |
+          corepack enable
+          corepack prepare pnpm@10 --activate
+          pnpm --version
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install Linux Dependencies
         if: startsWith(matrix.os, 'ubuntu')
+        shell: bash
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -131,9 +140,11 @@ jobs:
             librsvg2-dev
 
       - name: Install Project Dependencies
+        shell: bash
         run: pnpm install --no-frozen-lockfile
 
       - name: Force Version Sync
+        shell: bash
         run: |
           node -e "
             const fs = require('fs');
@@ -152,6 +163,7 @@ jobs:
           pnpm install --no-frozen-lockfile
 
       - name: Build Tauri App
+        shell: bash
         run: pnpm tauri build --no-bundle
         env:
           TAURI_CLI_SKIP_VERSION_CHECK: true
@@ -183,6 +195,13 @@ jobs:
         with:
           node-version: 22
 
+      - name: Enable pnpm
+        shell: bash
+        run: |
+          corepack enable
+          corepack prepare pnpm@10 --activate
+          pnpm --version
+
       - name: Download All Artifacts
         uses: actions/download-artifact@v4.3.0
         with:
@@ -190,9 +209,11 @@ jobs:
           merge-multiple: true
 
       - name: Fix Executable Permissions
-        run: chmod +x bin/terax-*
+        shell: bash
+        run: chmod +x bin/terax-* || true
 
       - name: Update package.json version
+        shell: bash
         run: |
           NEW_VER="${{ needs.check-version.outputs.version }}"
 
@@ -202,6 +223,7 @@ jobs:
           mv package.json.tmp package.json
 
       - name: Authenticate and Publish to NPM
+        shell: bash
         run: |
           echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
 
@@ -212,6 +234,7 @@ jobs:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Commit version bump back to repo
+        shell: bash
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
@@ -235,19 +258,15 @@ jobs:
       contents: read
     steps:
       - name: Delete past skipped and cancelled runs
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Get the current workflow ID
           WORKFLOW_ID=$(gh api repos/${{ github.repository }}/actions/runs/${{ github.run_id }} --jq '.workflow_id')
 
           echo "Current workflow ID: $WORKFLOW_ID"
           echo "Current run ID: ${{ github.run_id }}"
 
-          # Fetch the last 100 completed runs for this workflow.
-          # We include:
-          # - success runs where publish-and-update-repo was skipped
-          # - cancelled runs interrupted by newer runs
           RUNS=$(gh api "repos/${{ github.repository }}/actions/workflows/$WORKFLOW_ID/runs?per_page=100&status=completed" \
             --jq ".workflow_runs[] | select(.id != ${{ github.run_id }}) | {id: .id, conclusion: .conclusion}")
 
@@ -262,8 +281,6 @@ jobs:
             fi
 
             if [ "$RUN_CONCLUSION" = "success" ]; then
-              # Check if publish-and-update-repo was skipped.
-              # This identifies version-check-only runs.
               PUBLISH_CONCLUSION=$(gh api "repos/${{ github.repository }}/actions/runs/$RUN_ID/jobs" \
                 --jq '.jobs[] | select(.name == "publish-and-update-repo") | .conclusion' || echo "notfound")
 
