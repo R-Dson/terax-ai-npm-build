@@ -40,7 +40,6 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG=$(gh api repos/crynta/terax-ai/releases/latest --jq '.tag_name' | sed 's/^v//')
-
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "Upstream latest release version: $TAG"
 
@@ -151,9 +150,11 @@ jobs:
           pkg.dependencies = pkg.dependencies || {};
           pkg.devDependencies = pkg.devDependencies || {};
 
-          pkg.dependencies['@tauri-apps/api'] = '~2.10.0';
-          pkg.devDependencies['@tauri-apps/cli'] = '~2.10.0';
+          // Match Rust tauri crate 2.11.x.
+          pkg.dependencies['@tauri-apps/api'] = '~2.11.0';
+          pkg.devDependencies['@tauri-apps/cli'] = '~2.11.0';
 
+          // Avoid setup/corepack/npm trying to enforce pnpm.
           delete pkg.packageManager;
 
           fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
@@ -171,6 +172,9 @@ jobs:
           fs.writeFileSync(tauriConfigPath, JSON.stringify(tauriConfig, null, 2) + '\n');
           NODE
 
+          echo "Tauri JS package versions after patch:"
+          node -e "const p=require('./package.json'); console.log('@tauri-apps/api:', p.dependencies?.['@tauri-apps/api']); console.log('@tauri-apps/cli:', p.devDependencies?.['@tauri-apps/cli']);"
+
           echo "Remaining pnpm references in patched files:"
           grep -R "pnpm" package.json src-tauri/tauri.conf.json || true
 
@@ -184,7 +188,7 @@ jobs:
       - name: Build Tauri App
         shell: bash
         run: |
-          npx tauri build --no-bundle
+          npx --yes @tauri-apps/cli@2.11.0 build --no-bundle
         env:
           TAURI_CLI_SKIP_VERSION_CHECK: true
 
