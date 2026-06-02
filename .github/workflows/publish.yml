@@ -23,6 +23,7 @@ jobs:
       new_version_found: ${{ steps.compare.outputs.new_version_found }}
       version: ${{ steps.upstream.outputs.tag }}
       npm_version: ${{ steps.compare.outputs.npm_version }}
+
     steps:
       - name: Checkout Repo
         uses: actions/checkout@v6
@@ -32,19 +33,14 @@ jobs:
         with:
           node-version: 22
 
-      - name: Enable pnpm
-        shell: bash
-        run: |
-          corepack enable
-          corepack prepare pnpm@10 --activate
-          pnpm --version
-
       - name: Get Upstream Version
         id: upstream
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG=$(gh api repos/crynta/terax-ai/releases/latest --jq '.tag_name' | sed 's/^v//')
+
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "Upstream latest release version: $TAG"
 
@@ -55,6 +51,7 @@ jobs:
           PACKAGE_NAME=$(jq -r .name package.json)
           LOCAL_VER=$(jq -r .version package.json)
 
+          # npm view exits non-zero if the package does not exist yet
           NPM_VER=$(npm view "$PACKAGE_NAME" version 2>/dev/null || echo "0.0.0")
           UPSTREAM_VER="${{ steps.upstream.outputs.tag }}"
 
@@ -78,6 +75,7 @@ jobs:
     if: needs.check-version.outputs.new_version_found == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_publish)
     name: Build on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
+
     strategy:
       fail-fast: false
       matrix:
@@ -113,12 +111,12 @@ jobs:
         with:
           node-version: 22
 
-      - name: Enable pnpm
+      - name: Verify Node and npm
         shell: bash
         run: |
-          corepack enable
-          corepack prepare pnpm@10 --activate
-          pnpm --version
+          node --version
+          npm --version
+          npx --yes pnpm@10 --version
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -141,7 +139,8 @@ jobs:
 
       - name: Install Project Dependencies
         shell: bash
-        run: pnpm install --no-frozen-lockfile
+        run: |
+          npx --yes pnpm@10 install --no-frozen-lockfile
 
       - name: Force Version Sync
         shell: bash
@@ -160,11 +159,12 @@ jobs:
             fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
           "
 
-          pnpm install --no-frozen-lockfile
+          npx --yes pnpm@10 install --no-frozen-lockfile
 
       - name: Build Tauri App
         shell: bash
-        run: pnpm tauri build --no-bundle
+        run: |
+          npx --yes pnpm@10 tauri build --no-bundle
         env:
           TAURI_CLI_SKIP_VERSION_CHECK: true
 
@@ -184,6 +184,7 @@ jobs:
     needs: [check-version, build-binaries]
     runs-on: ubuntu-latest
     if: needs.build-binaries.result == 'success'
+
     steps:
       - name: Checkout Your Repo
         uses: actions/checkout@v6
@@ -195,12 +196,11 @@ jobs:
         with:
           node-version: 22
 
-      - name: Enable pnpm
+      - name: Verify Node and npm
         shell: bash
         run: |
-          corepack enable
-          corepack prepare pnpm@10 --activate
-          pnpm --version
+          node --version
+          npm --version
 
       - name: Download All Artifacts
         uses: actions/download-artifact@v4.3.0
@@ -208,9 +208,16 @@ jobs:
           path: bin/
           merge-multiple: true
 
+      - name: List Downloaded Artifacts
+        shell: bash
+        run: |
+          echo "Downloaded files:"
+          find bin -type f -maxdepth 2 -print
+
       - name: Fix Executable Permissions
         shell: bash
-        run: chmod +x bin/terax-* || true
+        run: |
+          chmod +x bin/terax-* || true
 
       - name: Update package.json version
         shell: bash
@@ -253,9 +260,11 @@ jobs:
     runs-on: ubuntu-latest
     needs: [check-version, build-binaries]
     if: always()
+
     permissions:
       actions: write
       contents: read
+
     steps:
       - name: Delete past skipped and cancelled runs
         shell: bash
