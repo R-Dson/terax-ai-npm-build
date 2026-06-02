@@ -22,9 +22,15 @@ jobs:
     outputs:
       new_version_found: ${{ steps.compare.outputs.new_version_found }}
       version: ${{ steps.upstream.outputs.tag }}
+      npm_version: ${{ steps.compare.outputs.npm_version }}
     steps:
       - name: Checkout Repo
         uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
 
       - name: Get Upstream Version
         id: upstream
@@ -32,40 +38,60 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # Use gh api to avoid rate limits
-          TAG=$(gh api repos/crynta/terax-ai/releases/latest --jq '.tag_name' | sed 's/v//')
-          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          TAG=$(gh api repos/crynta/terax-ai/releases/latest --jq '.tag_name' | sed 's/^v//')
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Upstream latest release version: $TAG"
 
       - name: Compare Versions
         id: compare
         run: |
+          PACKAGE_NAME=$(jq -r .name package.json)
           LOCAL_VER=$(jq -r .version package.json)
-          UPSTREAM_VER=${{ steps.upstream.outputs.tag }}
-          if [ "$LOCAL_VER" != "$UPSTREAM_VER" ]; then
-            echo "new_version_found=true" >> $GITHUB_OUTPUT
+
+          # npm view exits non-zero if the package does not exist yet
+          NPM_VER=$(npm view "$PACKAGE_NAME" version 2>/dev/null || echo "0.0.0")
+          UPSTREAM_VER="${{ steps.upstream.outputs.tag }}"
+
+          echo "Package name: $PACKAGE_NAME"
+          echo "Local package.json version: $LOCAL_VER"
+          echo "NPM published version: $NPM_VER"
+          echo "Upstream latest release version: $UPSTREAM_VER"
+
+          echo "npm_version=$NPM_VER" >> "$GITHUB_OUTPUT"
+
+          if [ "$NPM_VER" != "$UPSTREAM_VER" ]; then
+            echo "new_version_found=true" >> "$GITHUB_OUTPUT"
+            echo "NPM is behind upstream. Build and publish required."
           else
-            echo "new_version_found=false" >> $GITHUB_OUTPUT
+            echo "new_version_found=false" >> "$GITHUB_OUTPUT"
+            echo "NPM is already up to date."
           fi
 
   build-binaries:
     needs: check-version
-    if: needs.check-version.outputs.new_version_found == 'true' || github.event.inputs.force_publish == 'true'
+    if: needs.check-version.outputs.new_version_found == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_publish)
     name: Build on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-22.04
             output_name: terax-linux-x64
             binary_path: src-tauri/target/release/terax
+
           - os: ubuntu-22.04-arm
             output_name: terax-linux-arm64
             binary_path: src-tauri/target/release/terax
+
           - os: macos-14
             output_name: terax-darwin-arm64
             binary_path: src-tauri/target/release/terax
-          #- os: macos-13
-          #  output_name: terax-darwin-x64
-          #  binary_path: src-tauri/target/release/terax
+
+          # - os: macos-13
+          #   output_name: terax-darwin-x64
+          #   binary_path: src-tauri/target/release/terax
+
           - os: windows-latest
             output_name: terax-win32-x64.exe
             binary_path: src-tauri/target/release/terax.exe
@@ -93,7 +119,16 @@ jobs:
         if: startsWith(matrix.os, 'ubuntu')
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
 
       - name: Install Project Dependencies
         run: pnpm install --no-frozen-lockfile
@@ -102,11 +137,18 @@ jobs:
         run: |
           node -e "
             const fs = require('fs');
+
             const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+
+            pkg.dependencies = pkg.dependencies || {};
+            pkg.devDependencies = pkg.devDependencies || {};
+
             pkg.dependencies['@tauri-apps/api'] = '~2.10.0';
             pkg.devDependencies['@tauri-apps/cli'] = '~2.10.0';
-            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));
+
+            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
           "
+
           pnpm install --no-frozen-lockfile
 
       - name: Build Tauri App
@@ -118,7 +160,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p final-bin/
-          mv ${{ matrix.binary_path }} final-bin/${{ matrix.output_name }}
+          mv "${{ matrix.binary_path }}" "final-bin/${{ matrix.output_name }}"
 
       - name: Upload Binary Artifact
         uses: actions/upload-artifact@v4.6.2
@@ -152,13 +194,20 @@ jobs:
 
       - name: Update package.json version
         run: |
-          NEW_VER=${{ needs.check-version.outputs.version }}
-          jq ".version = \"$NEW_VER\"" package.json > package.json.tmp && mv package.json.tmp package.json
+          NEW_VER="${{ needs.check-version.outputs.version }}"
+
+          echo "Updating package.json version to $NEW_VER"
+
+          jq ".version = \"$NEW_VER\"" package.json > package.json.tmp
+          mv package.json.tmp package.json
 
       - name: Authenticate and Publish to NPM
         run: |
           echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
-          npm publish --access public || echo "Version already exists on NPM."
+
+          echo "Publishing version ${{ needs.check-version.outputs.version }} to NPM..."
+
+          npm publish --access public
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -166,7 +215,9 @@ jobs:
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
           git add package.json
+
           if ! git diff --cached --exit-code; then
             git commit -m "chore: sync with upstream version ${{ needs.check-version.outputs.version }}"
             git push
@@ -175,32 +226,50 @@ jobs:
           fi
 
   cleanup-runs:
-    name: Clean Up Skipped Runs
+    name: Clean Up Skipped and Cancelled Runs
     runs-on: ubuntu-latest
     needs: [check-version, build-binaries]
     if: always()
     permissions:
       actions: write
+      contents: read
     steps:
-      - name: Delete past skipped runs
+      - name: Delete past skipped and cancelled runs
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # 1. Get the current workflow ID
+          # Get the current workflow ID
           WORKFLOW_ID=$(gh api repos/${{ github.repository }}/actions/runs/${{ github.run_id }} --jq '.workflow_id')
 
-          # 2. Fetch the last 50 runs that are completed and successful
-          RUNS=$(gh api "repos/${{ github.repository }}/actions/workflows/$WORKFLOW_ID/runs?per_page=50" \
-            --jq ".workflow_runs[] | select(.id != ${{ github.run_id }} and .status==\"completed\" and .conclusion==\"success\") | .id")
+          echo "Current workflow ID: $WORKFLOW_ID"
+          echo "Current run ID: ${{ github.run_id }}"
 
-          for RUN_ID in $RUNS; do
-            # 3. Check if the non-matrix job "publish-and-update-repo" was skipped
-            CONCLUSION=$(gh api repos/${{ github.repository }}/actions/runs/$RUN_ID/jobs \
-              --jq '.jobs[] | select(.name == "publish-and-update-repo") | .conclusion' || echo "notfound")
+          # Fetch the last 100 completed runs for this workflow.
+          # We include:
+          # - success runs where publish-and-update-repo was skipped
+          # - cancelled runs interrupted by newer runs
+          RUNS=$(gh api "repos/${{ github.repository }}/actions/workflows/$WORKFLOW_ID/runs?per_page=100&status=completed" \
+            --jq ".workflow_runs[] | select(.id != ${{ github.run_id }}) | {id: .id, conclusion: .conclusion}")
 
-            # 4. Use grep to safely check the conclusion
-            if echo "$CONCLUSION" | grep -q "skipped"; then
-              echo "Run $RUN_ID was a version check only (build skipped). Deleting..."
-              gh run delete $RUN_ID --repo ${{ github.repository }}
+          echo "$RUNS" | jq -c '.' | while read -r RUN; do
+            RUN_ID=$(echo "$RUN" | jq -r '.id')
+            RUN_CONCLUSION=$(echo "$RUN" | jq -r '.conclusion')
+
+            if [ "$RUN_CONCLUSION" = "cancelled" ]; then
+              echo "Run $RUN_ID was cancelled. Deleting..."
+              gh run delete "$RUN_ID" --repo "${{ github.repository }}"
+              continue
+            fi
+
+            if [ "$RUN_CONCLUSION" = "success" ]; then
+              # Check if publish-and-update-repo was skipped.
+              # This identifies version-check-only runs.
+              PUBLISH_CONCLUSION=$(gh api "repos/${{ github.repository }}/actions/runs/$RUN_ID/jobs" \
+                --jq '.jobs[] | select(.name == "publish-and-update-repo") | .conclusion' || echo "notfound")
+
+              if echo "$PUBLISH_CONCLUSION" | grep -q "skipped"; then
+                echo "Run $RUN_ID was a version check only. Deleting..."
+                gh run delete "$RUN_ID" --repo "${{ github.repository }}"
+              fi
             fi
           done
