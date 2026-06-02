@@ -116,7 +116,6 @@ jobs:
         run: |
           node --version
           npm --version
-          npx --yes pnpm@10 --version
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -135,36 +134,58 @@ jobs:
             libxdo-dev \
             libssl-dev \
             libayatana-appindicator3-dev \
-            librsvg2-dev
+            librsvg2-dev \
+            patchelf
 
-      - name: Install Project Dependencies
+      - name: Patch Project to Build Without pnpm
         shell: bash
         run: |
-          npx --yes pnpm@10 install --no-frozen-lockfile
+          echo "Patching package.json and src-tauri/tauri.conf.json to avoid pnpm..."
 
-      - name: Force Version Sync
+          node <<'NODE'
+          const fs = require('fs');
+
+          const pkgPath = 'package.json';
+          const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+
+          pkg.dependencies = pkg.dependencies || {};
+          pkg.devDependencies = pkg.devDependencies || {};
+
+          pkg.dependencies['@tauri-apps/api'] = '~2.10.0';
+          pkg.devDependencies['@tauri-apps/cli'] = '~2.10.0';
+
+          // Remove packageManager so npm/corepack does not try to enforce pnpm.
+          delete pkg.packageManager;
+
+          fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
+
+          const tauriConfigPath = 'src-tauri/tauri.conf.json';
+          const tauriConfig = JSON.parse(fs.readFileSync(tauriConfigPath, 'utf8'));
+
+          tauriConfig.build = tauriConfig.build || {};
+          tauriConfig.build.beforeBuildCommand = 'npm run build';
+
+          if (tauriConfig.build.beforeDevCommand) {
+            tauriConfig.build.beforeDevCommand = 'npm run dev';
+          }
+
+          fs.writeFileSync(tauriConfigPath, JSON.stringify(tauriConfig, null, 2) + '\n');
+          NODE
+
+          echo "Remaining pnpm references:"
+          grep -R "pnpm" package.json src-tauri/tauri.conf.json || true
+
+      - name: Install Project Dependencies with npm
         shell: bash
         run: |
-          node -e "
-            const fs = require('fs');
-
-            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-
-            pkg.dependencies = pkg.dependencies || {};
-            pkg.devDependencies = pkg.devDependencies || {};
-
-            pkg.dependencies['@tauri-apps/api'] = '~2.10.0';
-            pkg.devDependencies['@tauri-apps/cli'] = '~2.10.0';
-
-            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
-          "
-
-          npx --yes pnpm@10 install --no-frozen-lockfile
+          npm config set fund false
+          npm config set audit false
+          npm install --legacy-peer-deps --no-package-lock
 
       - name: Build Tauri App
         shell: bash
         run: |
-          npx --yes pnpm@10 tauri build --no-bundle
+          npx tauri build --no-bundle
         env:
           TAURI_CLI_SKIP_VERSION_CHECK: true
 
@@ -212,7 +233,7 @@ jobs:
         shell: bash
         run: |
           echo "Downloaded files:"
-          find bin -type f -maxdepth 2 -print
+          find bin -maxdepth 2 -type f -print
 
       - name: Fix Executable Permissions
         shell: bash
